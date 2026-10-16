@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 import Plot from "react-plotly.js";
 
@@ -7,6 +7,46 @@ const [file, setFile] = useState(null);
 const [budget, setBudget] = useState("5000");
 const [message, setMessage] = useState("");
 const [page, setPage] = useState("setup");
+const [modelResults, setModelResults] = useState([]);
+const [validation, setValidation] = useState(null);
+
+useEffect(() => {
+  async function loadResults() {
+    try {
+      const [resultsResponse, validationResponse] = await Promise.all([
+        fetch("/data/corrected_causal_forest_results.csv"),
+        fetch("/data/week2_validation_summary.csv")
+      ]);
+
+      if (!resultsResponse.ok || !validationResponse.ok) {
+        throw new Error("Could not load model results.");
+      }
+
+      const resultsText = await resultsResponse.text();
+      const validationText = await validationResponse.text();
+
+      const parseCSV = (text) => {
+        const lines = text.trim().split(/\r?\n/);
+        const headers = lines[0].split(",").map(h => h.trim());
+
+        return lines.slice(1).map(line => {
+          const values = line.split(",");
+          return Object.fromEntries(
+            headers.map((header, i) => [header, values[i]?.trim()])
+          );
+        });
+      };
+
+      setModelResults(parseCSV(resultsText));
+      setValidation(parseCSV(validationText)[0]);
+    } catch (error) {
+      console.error(error);
+      setMessage("Could not load model results. Check the CSV files.");
+    }
+  }
+
+  loadResults();
+}, []);
 function handleSubmit(event) {
 event.preventDefault();
 if (!file) {
@@ -77,72 +117,111 @@ return (
 
   <section className="panel">
     <h2>Uplift Curves</h2>
-    <p>Illustrative customer response for different discount levels.</p><Plot
-  data={[
-    {
-      x: [0, 10, 20],
-      y: [20, 30, 43],
-      type: "scatter",
-      mode: "lines+markers",
-      name: "Purchase response",
-      line: { color: "#635bff", width: 3 },
-      marker: { size: 9 },
-    },
-  ]}
-  layout={{
-    autosize: true,
-    title: { text: "Discount vs Purchase Response" },
-    xaxis: { title: "Discount (%)", dtick: 10 },
-    yaxis: { title: "Illustrative response score" },
-    margin: { l: 65, r: 25, t: 60, b: 60 },
-    paper_bgcolor: "#ffffff",
-    plot_bgcolor: "#ffffff",
-  }}
-  useResizeHandler={true}
-  style={{ width: "100%", height: "380px" }}
-  config={{ responsive: true, displayModeBar: false }}
-/>
-<p className="message">
-  Note: Illustrative values only; these are not measured causal uplift estimates.
-</p>
+   <p>Individual treatment effects predicted by your Causal Forest model.</p>
 
+{modelResults.length > 0 ? (
+  <Plot
+    data={[
+      {
+        x: modelResults.map((_, i) => i + 1),
+        y: modelResults.map(row => Number(row.estimated_ite)),
+        type: "scatter",
+        mode: "lines",
+        name: "Estimated ITE",
+        line: { color: "#635bff", width: 2 },
+      },
+    ]}
+    layout={{
+      autosize: true,
+      title: { text: "Predicted Treatment Effects by Test Customer" },
+      xaxis: { title: "Test customer (CSV row order)" },
+      yaxis: { title: "Estimated treatment effect" },
+      margin: { l: 65, r: 25, t: 60, b: 60 },
+    }}
+    useResizeHandler
+    style={{ width: "100%", height: "380px" }}
+    config={{ responsive: true, displayModeBar: false }}
+  />
+) : (
+  <p className="message">Loading model results...</p>
+)}
+
+{validation && (
+  <p className="message">
+    Test customers: {validation.test_customers} |
+    MAE: {validation.MAE} |
+    RMSE: {validation.RMSE} |
+    Spearman correlation: {validation.spearman_correlation}
+  </p>
+)}
   </section>
 )}
-  {page === "allocation" && (
-    <section className="panel">
-      <h2>Allocation Matrix</h2>
-      <p>Review how the promotional budget could be allocated.</p>
-      <table>
-        <thead>
+   {page === "allocation" && (
+  <section className="panel">
+    <h2>Allocation Matrix</h2>
+    <p>Customer groups ranked using predicted treatment effects.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Customer Group</th>
+          <th>Discount</th>
+          <th>Budget Share</th>
+          <th>Customers</th>
+        </tr>
+      </thead>
+      <tbody>
+        {modelResults.length > 0 ? (() => {
+          const sorted = [...modelResults].sort(
+            (a, b) => Number(b.estimated_ite) - Number(a.estimated_ite)
+          );
+
+          const highCount = Math.ceil(sorted.length * 0.6);
+          const mediumCount = Math.ceil(sorted.length * 0.3);
+
+          const groups = [
+            {
+              name: "High uplift",
+              discount: "20%",
+              share: "60%",
+              count: highCount,
+            },
+            {
+              name: "Medium uplift",
+              discount: "10%",
+              share: "30%",
+              count: mediumCount,
+            },
+            {
+              name: "Low uplift",
+              discount: "0%",
+              share: "10%",
+              count: sorted.length - highCount - mediumCount,
+            },
+          ];
+
+          return groups.map(group => (
+            <tr key={group.name}>
+              <td>{group.name}</td>
+              <td>{group.discount}</td>
+              <td>{group.share}</td>
+              <td>{group.count}</td>
+            </tr>
+          ));
+        })() : (
           <tr>
-            <th>Customer Group</th>
-            <th>Discount</th>
-            <th>Budget Share</th>
+            <td colSpan="4">Loading model results...</td>
           </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>High uplift</td>
-            <td>20%</td>
-            <td>60%</td>
-          </tr>
-          <tr>
-            <td>Medium uplift</td>
-            <td>10%</td>
-            <td>30%</td>
-          </tr>
-          <tr>
-            <td>Low uplift</td>
-            <td>0%</td>
-            <td>10%</td>
-          </tr>
-        </tbody>
-      </table>
-      <p className="message">
-        Illustrative allocation only — not calculated from customer data.
-      </p>
-    </section>
-  )}
+        )}
+      </tbody>
+    </table>
+
+    <p className="message">
+      Customer counts are ranked by predicted ITE. Budget shares are proposed
+      allocations, not model-optimized amounts.
+    </p>
+  </section>
+)}
   <footer>
     EconoCausal | Causal Inference &amp; Budget Planning
   </footer>
