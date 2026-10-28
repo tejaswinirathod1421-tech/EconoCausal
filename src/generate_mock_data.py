@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 np.random.seed(42)
 n = 10000
 # Customer features
