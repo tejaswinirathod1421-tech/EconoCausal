@@ -40,6 +40,7 @@ data = pd.DataFrame({
     "revenue": revenue.round(2),
     "true_effect": true_effect.round(2)
 })
+os.makedirs("data", exist_ok=True)
 data.to_csv("data/retail_mock.csv", index=False)
 print("Dataset created successfully!")
 print(data.head())
